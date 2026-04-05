@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { generateQueens, getConflicts, QueensPuzzle } from './queensLogic'
 import { useTimer } from '../../hooks/useTimer'
-import GameHeader from '../../components/GameHeader'
+import GameHeader, { ControlsBar, PrimaryBtn, GhostBtn } from '../../components/GameHeader'
 import WinModal from '../../components/WinModal'
+
+interface QueensSnapshot { board: boolean[][], hints: Set<string> }
 
 interface Props { onBack: () => void }
 
-// Distinct, accessible color palette for regions
 const REGION_COLORS = [
   '#FF8A80', '#82B1FF', '#CCFF90', '#FFD180',
   '#EA80FC', '#80D8FF', '#F4FF81', '#FF80AB',
@@ -16,51 +17,98 @@ const REGION_COLORS = [
 function newPuzzle() { return generateQueens(8) }
 
 export default function QueensGame({ onBack }: Props) {
-  const [puzzle, setPuzzle] = useState<QueensPuzzle>(newPuzzle)
-  const [board, setBoard] = useState<boolean[][]>(
-    () => Array.from({ length: 8 }, () => Array(8).fill(false))
-  )
-  const [solved, setSolved] = useState(false)
+  const [puzzle, setPuzzle]       = useState<QueensPuzzle>(newPuzzle)
+  const [board, setBoard]         = useState<boolean[][]>(() => Array.from({ length: 8 }, () => Array(8).fill(false)))
+  const [hints, setHints]         = useState<Set<string>>(new Set())
+  const [hintsUsed, setHintsUsed] = useState(0)
+  const [history, setHistory]     = useState<QueensSnapshot[]>([])
+  const [solved, setSolved]       = useState(false)
 
   const { seconds, reset } = useTimer(!solved)
+  const MAX_HINTS = 3
+
+  function saveSnapshot() {
+    setHistory(h => [...h, { board: board.map(row => [...row]), hints: new Set(hints) }])
+  }
+
+  function undo() {
+    if (history.length === 0) return
+    const prev = history[history.length - 1]
+    setBoard(prev.board)
+    setHints(prev.hints)
+    setHintsUsed(prev.hints.size)
+    setHistory(h => h.slice(0, -1))
+    setSolved(false)
+  }
 
   function startNew() {
     setPuzzle(newPuzzle())
     setBoard(Array.from({ length: 8 }, () => Array(8).fill(false)))
+    setHints(new Set())
+    setHintsUsed(0)
+    setHistory([])
     setSolved(false)
     reset()
   }
 
   function toggle(r: number, c: number) {
     if (solved) return
+    if (hints.has(r + ',' + c)) return
+    saveSnapshot()
     const next = board.map(row => [...row])
     next[r][c] = !next[r][c]
     setBoard(next)
-
-    // Win check
     let count = 0
     for (let ri = 0; ri < puzzle.N; ri++)
       for (let ci = 0; ci < puzzle.N; ci++)
         if (next[ri][ci]) count++
-
     if (count === puzzle.N) {
       const { conflictRows, conflictCols, conflictCells } = getConflicts(next, puzzle.regions, puzzle.N)
-      if (conflictRows.size === 0 && conflictCols.size === 0 && conflictCells.size === 0) {
-        setSolved(true)
-      }
+      if (conflictRows.size === 0 && conflictCols.size === 0 && conflictCells.size === 0) setSolved(true)
     }
+  }
+
+  function applyHint() {
+    if (hintsUsed >= MAX_HINTS) return
+    const unplaced = puzzle.queens.filter(([r, c]) => !board[r][c])
+    if (unplaced.length === 0) return
+    saveSnapshot()
+    const [r, c] = unplaced[Math.floor(Math.random() * unplaced.length)]
+    const nextBoard = board.map(row => [...row])
+    nextBoard[r][c] = true
+    setBoard(nextBoard)
+    setHints(prev => new Set([...prev, r + ',' + c]))
+    setHintsUsed(h => h + 1)
   }
 
   const { N, regions } = puzzle
   const { conflictRows, conflictCols, conflictCells } = getConflicts(board, regions, N)
 
-  // Count placed queens
   let placed = 0
   for (let r = 0; r < N; r++)
     for (let c = 0; c < N; c++)
       if (board[r][c]) placed++
 
-  const cellSize = Math.min(52, Math.floor((Math.min(window.innerWidth, 460) - 40) / N))
+  const cellSize = Math.min(52, Math.floor((Math.min(window.innerWidth, 460) - 32) / N))
+  const hasConflict = conflictRows.size > 0 || conflictCols.size > 0
+  const hintsLeft = MAX_HINTS - hintsUsed
+
+  const hintBtn = (
+    <button
+      onClick={applyHint}
+      disabled={hintsUsed >= MAX_HINTS}
+      style={{
+        background: hintsUsed >= MAX_HINTS ? '#f0f0f0' : '#fff8e1',
+        border: '2px solid ' + (hintsUsed >= MAX_HINTS ? '#ddd' : '#f9a825'),
+        borderRadius: 22, padding: '7px 18px',
+        fontSize: 13, fontWeight: 700,
+        cursor: hintsUsed >= MAX_HINTS ? 'not-allowed' : 'pointer',
+        color: hintsUsed >= MAX_HINTS ? '#bbb' : '#f57f17',
+      }}
+    >
+      Hint ({hintsLeft} left)
+    </button>
+  )
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh', background: '#f3f2ef' }}>
@@ -68,96 +116,82 @@ export default function QueensGame({ onBack }: Props) {
         title="Queens"
         seconds={seconds}
         onBack={onBack}
-        onNew={startNew}
-        extra={
-          <span style={{ fontSize: 13, color: '#666', marginLeft: 4 }}>
-            {placed}/{N} placed
-          </span>
-        }
+        badge={<span style={{ fontSize: 12, color: '#888' }}>{placed}/{N} queens</span>}
       />
 
-      <div style={{
-        flex: 1, display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'flex-start',
-        padding: '12px 16px', gap: 12, overflowY: 'auto',
-      }}>
-        <p style={{ fontSize: 13, color: '#555', textAlign: 'center', lineHeight: 1.4 }}>
-          Place one ♛ per <strong>row</strong>, <strong>column</strong> &amp; <strong>color</strong>.
-          No two queens may touch.
-        </p>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', overflowY: 'auto' }}>
 
-        {/* Conflict legend */}
-        {(conflictRows.size > 0 || conflictCols.size > 0) && (
-          <div style={{
-            background: '#fff0f0', border: '1.5px solid #ffaaaa',
-            borderRadius: 8, padding: '6px 12px',
-            fontSize: 12, color: '#cc1016', fontWeight: 600,
-          }}>
-            🚨 Red row/column = two queens share that line
-          </div>
-        )}
+        {/* Controls ABOVE grid */}
+        <ControlsBar>
+          <PrimaryBtn onClick={startNew}>New Game</PrimaryBtn>
+          {hintBtn}
+          <GhostBtn onClick={undo} color="#666">↩ Undo</GhostBtn>
+        </ControlsBar>
+
+        <p style={{ fontSize: 12, color: '#777', marginBottom: 10, textAlign: 'center', padding: '0 16px' }}>
+          One queen per row, column and color region. Queens cannot touch.
+        </p>
 
         {/* Grid */}
         <div
           className="no-select"
           style={{
             display: 'grid',
-            gridTemplateColumns: `repeat(${N}, ${cellSize}px)`,
-            gridTemplateRows: `repeat(${N}, ${cellSize}px)`,
+            gridTemplateColumns: 'repeat(' + N + ', ' + cellSize + 'px)',
+            gridTemplateRows:    'repeat(' + N + ', ' + cellSize + 'px)',
             border: '3px solid #1d2226',
             borderRadius: 8,
             overflow: 'hidden',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
           }}
         >
           {Array.from({ length: N }, (_, r) =>
             Array.from({ length: N }, (_, c) => {
-              const reg = regions[r][c]
-              const baseColor = REGION_COLORS[reg % REGION_COLORS.length]
-              const hasQueen = board[r][c]
-              const rowConflict = conflictRows.has(r)
-              const colConflict = conflictCols.has(c)
-              const cellConflict = conflictCells.has(`${r},${c}`) && hasQueen
+              const reg        = regions[r][c]
+              const baseColor  = REGION_COLORS[reg % REGION_COLORS.length]
+              const hasQueen   = board[r][c]
+              const isHint     = hints.has(r + ',' + c)
+              const rowErr     = conflictRows.has(r)
+              const colErr     = conflictCols.has(c)
+              const cellErr    = conflictCells.has(r + ',' + c) && hasQueen
+              const rightDiff  = c < N - 1 && regions[r][c + 1] !== reg
+              const bottomDiff = r < N - 1 && regions[r + 1][c] !== reg
 
-              // Whole row/col highlight overrides region color
               let bg = baseColor
-              if (rowConflict || colConflict) {
-                // Blend region color with red
-                bg = `linear-gradient(rgba(220,50,50,0.40), rgba(220,50,50,0.40)), ${baseColor}`
-              }
+              if (rowErr || colErr) bg = 'linear-gradient(rgba(220,40,40,0.38), rgba(220,40,40,0.38)), ' + baseColor
 
               return (
                 <div
-                  key={`${r}-${c}`}
+                  key={r + '-' + c}
                   onClick={() => toggle(r, c)}
                   style={{
                     width: cellSize, height: cellSize,
                     background: bg,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: cellSize * 0.5,
-                    cursor: 'pointer',
+                    cursor: isHint ? 'default' : 'pointer',
                     position: 'relative',
-                    borderRight:  c < N - 1 ? '1px solid rgba(0,0,0,0.15)' : 'none',
-                    borderBottom: r < N - 1 ? '1px solid rgba(0,0,0,0.15)' : 'none',
-                    transition: 'background 0.1s',
+                    borderRight:  c < N - 1 ? (rightDiff  ? '2.5px solid #1d2226' : '1px solid rgba(0,0,0,0.18)') : 'none',
+                    borderBottom: r < N - 1 ? (bottomDiff ? '2.5px solid #1d2226' : '1px solid rgba(0,0,0,0.18)') : 'none',
                     boxSizing: 'border-box',
+                    transition: 'background 0.1s',
                   }}
                 >
-                  {/* Error outline on queen cell */}
-                  {cellConflict && (
+                  {cellErr && (
                     <div style={{
                       position: 'absolute', inset: 0,
                       border: '3px solid #cc1016',
-                      pointerEvents: 'none',
-                      zIndex: 2,
+                      pointerEvents: 'none', zIndex: 2,
                     }} />
                   )}
                   {hasQueen && (
                     <span style={{
-                      position: 'relative', zIndex: 1,
-                      filter: cellConflict ? 'none' : 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))',
-                      fontSize: cellSize * 0.52,
+                      fontSize: cellSize * 0.50,
                       lineHeight: 1,
+                      position: 'relative', zIndex: 1,
+                      opacity: isHint ? 0.55 : 1,
+                      filter: isHint
+                        ? 'grayscale(0.4)'
+                        : cellErr ? 'none' : 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))',
                     }}>
                       ♛
                     </span>
@@ -168,31 +202,31 @@ export default function QueensGame({ onBack }: Props) {
           )}
         </div>
 
-        {/* Color legend */}
-        <div style={{
-          display: 'flex', flexWrap: 'wrap', gap: 6,
-          justifyContent: 'center', maxWidth: 400,
-        }}>
-          {Array.from({ length: N }, (_, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <div style={{
-                width: 14, height: 14, borderRadius: 3,
-                background: REGION_COLORS[i % REGION_COLORS.length],
-                border: '1px solid rgba(0,0,0,0.2)',
-              }} />
-              <span style={{ fontSize: 11, color: '#555' }}>Region {i + 1}</span>
-            </div>
-          ))}
-        </div>
+        {/* Conflict alert — BELOW the grid */}
+        {hasConflict && (
+          <div style={{
+            marginTop: 12,
+            background: '#fff0f0',
+            border: '1.5px solid #ffaaaa',
+            borderRadius: 10,
+            padding: '8px 16px',
+            fontSize: 13, color: '#cc1016', fontWeight: 600,
+            textAlign: 'center',
+          }}>
+            Red = two queens share that row or column
+          </div>
+        )}
+
+        {/* Controls BELOW grid */}
+        <ControlsBar>
+          <PrimaryBtn onClick={startNew}>New Game</PrimaryBtn>
+          {hintBtn}
+        </ControlsBar>
+
       </div>
 
       {solved && (
-        <WinModal
-          gameName="Queens"
-          seconds={seconds}
-          onNewGame={startNew}
-          onHome={onBack}
-        />
+        <WinModal gameName="Queens" seconds={seconds} onNewGame={startNew} onHome={onBack} />
       )}
     </div>
   )

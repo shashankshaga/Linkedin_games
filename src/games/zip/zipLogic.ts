@@ -1,10 +1,13 @@
+export type ZipDifficulty = 'easy' | 'medium' | 'hard'
+
 export interface ZipPuzzle {
   R: number
   C: number
-  waypoints: number[][] // grid[r][c] = waypoint number (0 = none)
-  walls: Set<string>    // "h-r-c" (right of (r,c)) | "v-r-c" (below (r,c))
+  waypoints: number[][]       // grid[r][c] = waypoint number (0 = none)
+  walls: Set<string>          // "h-r-c" (right of (r,c)) | "v-r-c" (below (r,c))
   solution: [number, number][]
   numWaypoints: number
+  difficulty: ZipDifficulty
 }
 
 function shuffle<T>(arr: T[]): T[] {
@@ -21,7 +24,7 @@ function generateHamiltonianPath(R: number, C: number): [number, number][] {
   const path: [number, number][] = []
   const DIRS: [number, number][] = [[0,1],[1,0],[0,-1],[-1,0]]
 
-  function dfs(r: number, c: number): boolean {
+  const dfs = (r: number, c: number): boolean => {
     vis[r][c] = true
     path.push([r, c])
     if (path.length === R * C) return true
@@ -36,18 +39,17 @@ function generateHamiltonianPath(R: number, C: number): [number, number][] {
     return false
   }
 
-  // Try multiple random starts
-  const starts = shuffle(
-    Array.from({ length: R * C }, (_, i) => [Math.floor(i / C), i % C] as [number, number])
-  )
-  for (const [sr, sc] of starts.slice(0, 4)) {
+  // Try a few random starts to get a winding path
+  for (const [sr, sc] of shuffle(Array.from({ length: R * C }, (_, i) => [Math.floor(i / C), i % C] as [number, number])).slice(0, 6)) {
+    path.length = 0
+    vis.forEach(row => row.fill(false))
     if (dfs(sr, sc)) return path
   }
 
-  // Fallback: snake
+  // Snake fallback
   path.length = 0
   for (let r = 0; r < R; r++) {
-    const row: [number, number][] = Array.from({ length: C }, (_, c) => [r, c])
+    const row = Array.from({ length: C }, (_, c) => [r, c] as [number, number])
     if (r % 2 === 1) row.reverse()
     path.push(...row)
   }
@@ -59,32 +61,47 @@ function edgeKey(r1: number, c1: number, r2: number, c2: number): string {
   return `v-${Math.min(r1, r2)}-${c1}`
 }
 
-export function generateZip(R = 6, C = 6, numWaypoints = 7): ZipPuzzle {
+// Wall density ranges per difficulty — randomised within range each game
+const WALL_RANGE: Record<ZipDifficulty, [number, number]> = {
+  easy:   [0.10, 0.35],   // very open — few walls
+  medium: [0.40, 0.62],   // moderate
+  hard:   [0.65, 0.85],   // heavily walled
+}
+
+const WAYPOINT_COUNT: Record<ZipDifficulty, number> = {
+  easy:   4,
+  medium: 6,
+  hard:   8,
+}
+
+export function generateZip(difficulty: ZipDifficulty = 'medium'): ZipPuzzle {
+  const R = 6, C = 6
+  const numWaypoints = WAYPOINT_COUNT[difficulty]
   const solution = generateHamiltonianPath(R, C)
 
-  // Collect path edges
+  // Build set of edges used by the solution path
   const pathEdges = new Set<string>()
   for (let i = 0; i < solution.length - 1; i++) {
     pathEdges.add(edgeKey(...solution[i], ...solution[i + 1]))
   }
 
-  // Collect all interior edges
+  // All interior edges
   const allEdges: string[] = []
-  for (let r = 0; r < R; r++) {
+  for (let r = 0; r < R; r++)
     for (let c = 0; c < C; c++) {
       if (c < C - 1) allEdges.push(`h-${r}-${c}`)
       if (r < R - 1) allEdges.push(`v-${r}-${c}`)
     }
-  }
 
-  // Non-path edges become potential blockers
   const nonPath = allEdges.filter(e => !pathEdges.has(e))
 
-  // Add ~70% of non-path edges as walls (enough to guide but still challenging)
-  const wallCount = Math.floor(nonPath.length * 0.70)
+  // Pick a random density within the difficulty range
+  const [lo, hi] = WALL_RANGE[difficulty]
+  const density = lo + Math.random() * (hi - lo)
+  const wallCount = Math.floor(nonPath.length * density)
   const walls = new Set(shuffle(nonPath).slice(0, wallCount))
 
-  // Place waypoints evenly along path
+  // Place waypoints evenly along the solution path
   const waypoints = Array.from({ length: R }, () => Array(C).fill(0))
   const step = Math.floor(solution.length / (numWaypoints - 1))
   for (let i = 0; i < numWaypoints; i++) {
@@ -93,7 +110,7 @@ export function generateZip(R = 6, C = 6, numWaypoints = 7): ZipPuzzle {
     waypoints[r][c] = i + 1
   }
 
-  return { R, C, waypoints, walls, solution, numWaypoints }
+  return { R, C, waypoints, walls, solution, numWaypoints, difficulty }
 }
 
 export function canMove(
